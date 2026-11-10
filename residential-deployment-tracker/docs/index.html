@@ -83,6 +83,7 @@
   .line { fill: none; stroke-width: 2px; }
   .grid-line { stroke: var(--grid); stroke-width: 1px; }
   .baseline { stroke: var(--baseline); stroke-width: 1px; }
+  .year-line { stroke: var(--grid); stroke-width: 1px; stroke-dasharray: 2 3; }
   .hover-dot { fill: var(--surface-1); stroke-width: 2px; r: 5px; }
   .crosshair { stroke: var(--muted); stroke-width: 1px; stroke-dasharray: 3 3; }
   .tooltip {
@@ -110,7 +111,7 @@
 <body>
 <div class="wrap">
   <h1>GFI Residential Deployment Tracker</h1>
-  <p class="subtitle">UK domestic heat pump, battery and solar PV installations over time.<br>Data last checked against source: 2026-11-10 11:27 UTC. Page built 2026-11-10 11:35 UTC.</p>
+  <p class="subtitle">UK domestic heat pump, battery and solar PV installations over time.<br>Data last checked against source: 2026-11-10 11:32 UTC. Page built 2026-11-10 11:38 UTC.</p>
   <div id="charts"></div>
   <footer>
     Sources: DESNZ heat pump deployment statistics, MCS domestic battery installation statistics, DESNZ Energy Trends 6.3 (solar PV).
@@ -128,6 +129,46 @@ function fmt(n) {
 function periodStepBack(points, idx, step) {
   const j = idx - step;
   return j >= 0 ? points[j] : null;
+}
+
+// Standard "nice numbers" axis algorithm - picks round steps (1/2/5 x10^n)
+// so ticks land on 5k/10k/15k rather than whatever min/max happen to be.
+function niceNum(range, round) {
+  const exponent = Math.floor(Math.log10(range));
+  const fraction = range / Math.pow(10, exponent);
+  let niceFraction;
+  if (round) {
+    niceFraction = fraction < 1.5 ? 1 : fraction < 3 ? 2 : fraction < 7 ? 5 : 10;
+  } else {
+    niceFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  }
+  return niceFraction * Math.pow(10, exponent);
+}
+
+function niceTicks(min, max, maxTicks) {
+  const rawRange = niceNum(Math.max(max - min, 1), false);
+  const step = niceNum(rawRange / (maxTicks - 1), true);
+  const niceMin = Math.floor(min / step) * step;
+  const niceMax = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = niceMin; v <= niceMax + step * 0.5; v += step) ticks.push(v);
+  return ticks;
+}
+
+// Returns the point index of each calendar year's first period (quarterly
+// "YYYY Q1" or monthly "YYYY-01"), for dashed year-marker gridlines.
+function yearBoundaries(points) {
+  const marks = [];
+  points.forEach((p, i) => {
+    const qMatch = p.period.match(/^(\d{4}) Q1/);
+    const mMatch = p.period.match(/^(\d{4})-01$/);
+    const match = qMatch || mMatch;
+    if (match) marks.push({ index: i, year: match[1] });
+  });
+  // Thin labels if there would be too many to read, but keep every line.
+  const maxLabels = 10;
+  const labelStride = Math.max(1, Math.ceil(marks.length / maxLabels));
+  return marks.map((m, k) => ({ ...m, showLabel: k % labelStride === 0 }));
 }
 
 function downloadChartPNG(svg, idBase) {
@@ -160,6 +201,7 @@ function downloadChartPNG(svg, idBase) {
     const computed = getComputedStyle(origEl);
     cloneEl.setAttribute('fill', computed.fill);
     cloneEl.setAttribute('stroke', computed.stroke);
+    cloneEl.setAttribute('stroke-dasharray', computed.strokeDasharray);
     cloneEl.removeAttribute('class');
   });
 
@@ -233,8 +275,11 @@ function buildChart(series) {
   const padL = 72, padR = 10, padT = 10, padB = 24;
   const w = 860, h = 220;
   const values = points.map(p => p.value);
-  const minV = Math.min(...values, 0);
-  const maxV = Math.max(...values, minV + 1);
+  const rawMin = Math.min(...values, 0);
+  const rawMax = Math.max(...values, rawMin + 1);
+  const ticks = niceTicks(rawMin, rawMax, 5);
+  const minV = ticks[0];
+  const maxV = ticks[ticks.length - 1];
   const range = (maxV - minV) || 1;
 
   const x = i => padL + (i / Math.max(points.length - 1, 1)) * (w - padL - padR);
@@ -254,15 +299,34 @@ function buildChart(series) {
     return e;
   }
 
-  // gridlines + y-axis labels (4 horizontal bands)
-  for (let i = 0; i <= 3; i++) {
-    const v = minV + (range * i / 3);
+  // gridlines + y-axis labels at nice round values
+  ticks.forEach((v) => {
     svg.appendChild(el('line', { x1: padL, x2: w - padR, y1: y(v), y2: y(v), class: 'grid-line' }));
     const t = el('text', { x: padL - 10, y: y(v) + 3, 'text-anchor': 'end', fill: 'var(--muted)', 'font-size': '10' });
     t.textContent = fmtAxis(v);
     svg.appendChild(t);
+  });
+  svg.appendChild(el('line', { x1: padL, x2: w - padR, y1: y(0), y2: y(0), class: 'baseline' }));
+
+  // dashed vertical lines marking each calendar year, with a year label
+  const yearMarks = yearBoundaries(points);
+  if (yearMarks.length > 0) {
+    yearMarks.forEach(({ index, year, showLabel }) => {
+      svg.appendChild(el('line', { x1: x(index), x2: x(index), y1: padT, y2: h - padB, class: 'year-line' }));
+      if (showLabel) {
+        const t = el('text', { x: x(index), y: h - 6, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': '10' });
+        t.textContent = year;
+        svg.appendChild(t);
+      }
+    });
+  } else {
+    // Fallback for a series too short to contain a calendar year boundary.
+    [0, points.length - 1].forEach((i, k) => {
+      const t = el('text', { x: x(i), y: h - 6, 'text-anchor': k === 0 ? 'start' : 'end', fill: 'var(--muted)', 'font-size': '10' });
+      t.textContent = points[i].period;
+      svg.appendChild(t);
+    });
   }
-  svg.appendChild(el('line', { x1: padL, x2: w - padR, y1: h - padB, y2: h - padB, class: 'baseline' }));
 
   // line path (only draws between 2+ points)
   if (points.length > 1) {
@@ -274,17 +338,6 @@ function buildChart(series) {
   points.forEach((p, i) => {
     svg.appendChild(el('circle', { cx: x(i), cy: y(p.value), r: points.length > 60 ? 2 : 3.5, fill: color }));
   });
-
-  // x-axis labels (first, last, and a few in between) - anchor the first/
-  // last labels to the inside edge so they don't clip past the viewBox
-  const labelCount = Math.min(6, points.length);
-  for (let k = 0; k < labelCount; k++) {
-    const i = Math.round(k * (points.length - 1) / Math.max(labelCount - 1, 1));
-    const anchor = k === 0 ? 'start' : (k === labelCount - 1 ? 'end' : 'middle');
-    const t = el('text', { x: x(i), y: h - 6, 'text-anchor': anchor, fill: 'var(--muted)', 'font-size': '10' });
-    t.textContent = points[i].period;
-    svg.appendChild(t);
-  }
 
   // hover interaction (hidden via opacity, never relies on off-canvas position)
   const crosshair = el('line', { class: 'crosshair', y1: padT, y2: h - padB, x1: 0, x2: 0, opacity: 0 });
