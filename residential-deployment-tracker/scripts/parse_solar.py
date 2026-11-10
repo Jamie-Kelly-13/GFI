@@ -38,7 +38,7 @@ def parse(xlsx_path: Path) -> dict:
         if constituency_code == "All constituencies" and country_region == "All countries":
             return {
                 "release_month": release_month,
-                "cumulative_capacity_mw": row[3],
+                "cumulative_capacity_mw": round(row[3], 2),
                 "cumulative_installs": row[4],
             }
 

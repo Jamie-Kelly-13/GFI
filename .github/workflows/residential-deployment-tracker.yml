@@ -1,0 +1,73 @@
+name: Residential deployment tracker
+
+on:
+  schedule:
+    # Daily at 06:00 UTC. Sources update monthly/quarterly, so this just
+    # needs to be frequent enough to catch a new release promptly.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "residential-deployment-tracker/scripts/**"
+      - ".github/workflows/residential-deployment-tracker.yml"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: residential-deployment-tracker
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check sources and update data + chart
+        run: python scripts/check_and_update.py
+
+      - name: Commit updated data (if any)
+        id: commit
+        run: |
+          git config user.name "gfi-tracker-bot"
+          git config user.email "actions@github.com"
+          git add data/ docs/
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "Update residential deployment tracker data [automated]"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: residential-deployment-tracker/docs
+
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
