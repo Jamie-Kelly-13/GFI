@@ -217,15 +217,22 @@ function buildChart(series) {{
     return;
   }}
 
-  const padL = 50, padR = 10, padT = 10, padB = 24;
+  const padL = 72, padR = 10, padT = 10, padB = 24;
   const w = 860, h = 220;
   const values = points.map(p => p.value);
   const minV = Math.min(...values, 0);
-  const maxV = Math.max(...values);
+  const maxV = Math.max(...values, minV + 1);
   const range = (maxV - minV) || 1;
 
   const x = i => padL + (i / Math.max(points.length - 1, 1)) * (w - padL - padR);
   const y = v => padT + (1 - (v - minV) / range) * (h - padT - padB);
+
+  function fmtAxis(n) {{
+    const abs = Math.abs(n);
+    if (abs >= 1e6) return (n / 1e6).toFixed(abs % 1e6 === 0 ? 0 : 1) + 'm';
+    if (abs >= 1e3) return (n / 1e3).toFixed(abs % 1e3 === 0 ? 0 : 1) + 'k';
+    return String(Math.round(n));
+  }}
 
   const ns = 'http://www.w3.org/2000/svg';
   function el(tag, attrs) {{
@@ -234,16 +241,26 @@ function buildChart(series) {{
     return e;
   }}
 
-  // gridlines (4 horizontal bands)
+  // gridlines + y-axis labels (4 horizontal bands)
   for (let i = 0; i <= 3; i++) {{
     const v = minV + (range * i / 3);
     svg.appendChild(el('line', {{ x1: padL, x2: w - padR, y1: y(v), y2: y(v), class: 'grid-line' }}));
+    const t = el('text', {{ x: padL - 10, y: y(v) + 3, 'text-anchor': 'end', fill: 'var(--muted)', 'font-size': '10' }});
+    t.textContent = fmtAxis(v);
+    svg.appendChild(t);
   }}
   svg.appendChild(el('line', {{ x1: padL, x2: w - padR, y1: h - padB, y2: h - padB, class: 'baseline' }}));
 
-  // line path
-  const d = points.map((p, i) => `${{i === 0 ? 'M' : 'L'}} ${{x(i)}} ${{y(p.value)}}`).join(' ');
-  svg.appendChild(el('path', {{ d, class: 'line', stroke: color }}));
+  // line path (only draws between 2+ points)
+  if (points.length > 1) {{
+    const d = points.map((p, i) => `${{i === 0 ? 'M' : 'L'}} ${{x(i)}} ${{y(p.value)}}`).join(' ');
+    svg.appendChild(el('path', {{ d, class: 'line', stroke: color }}));
+  }}
+
+  // permanent markers at every data point
+  points.forEach((p, i) => {{
+    svg.appendChild(el('circle', {{ cx: x(i), cy: y(p.value), r: points.length > 60 ? 2 : 3.5, fill: color }}));
+  }});
 
   // x-axis labels (first, last, and a few in between)
   const labelCount = Math.min(6, points.length);
@@ -254,9 +271,9 @@ function buildChart(series) {{
     svg.appendChild(t);
   }}
 
-  // hover interaction
-  const crosshair = el('line', {{ class: 'crosshair', y1: padT, y2: h - padB, x1: -100, x2: -100 }});
-  const dot = el('circle', {{ class: 'hover-dot', stroke: color, cx: -100, cy: -100 }});
+  // hover interaction (hidden via opacity, never relies on off-canvas position)
+  const crosshair = el('line', {{ class: 'crosshair', y1: padT, y2: h - padB, x1: 0, x2: 0, opacity: 0 }});
+  const dot = el('circle', {{ class: 'hover-dot', stroke: color, cx: 0, cy: 0, opacity: 0 }});
   svg.appendChild(crosshair);
   svg.appendChild(dot);
 
@@ -273,8 +290,10 @@ function buildChart(series) {{
 
     crosshair.setAttribute('x1', x(idx));
     crosshair.setAttribute('x2', x(idx));
+    crosshair.setAttribute('opacity', 1);
     dot.setAttribute('cx', x(idx));
     dot.setAttribute('cy', y(p.value));
+    dot.setAttribute('opacity', 1);
 
     const prevPeriod = periodStepBack(points, idx, series.period_step);
     const prevYear = periodStepBack(points, idx, series.year_step);
@@ -302,9 +321,8 @@ function buildChart(series) {{
 
   overlay.addEventListener('mouseleave', () => {{
     tooltip.style.display = 'none';
-    crosshair.setAttribute('x1', -100);
-    crosshair.setAttribute('x2', -100);
-    dot.setAttribute('cx', -100);
+    crosshair.setAttribute('opacity', 0);
+    dot.setAttribute('opacity', 0);
   }});
 }}
 
