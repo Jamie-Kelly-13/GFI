@@ -232,7 +232,10 @@ function downloadChartPNG(svg, idBase) {{
   // stripped, and would otherwise fall back to SVG's default black fill.
   originals.forEach((origEl, i) => {{
     const cloneEl = clones[i];
-    if (!cloneEl || !cloneEl.isConnected) return;
+    // Note: cloneEl.isConnected is always false here - clone is a detached
+    // tree, never inserted into the document - so that can't be used to
+    // detect removed elements. Just skip ones the earlier pass deleted.
+    if (!cloneEl || cloneEl.parentNode === null) return;
     const computed = getComputedStyle(origEl);
     cloneEl.setAttribute('fill', computed.fill);
     cloneEl.setAttribute('stroke', computed.stroke);

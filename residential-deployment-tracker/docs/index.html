@@ -110,7 +110,7 @@
 <body>
 <div class="wrap">
   <h1>GFI Residential Deployment Tracker</h1>
-  <p class="subtitle">UK domestic heat pump, battery and solar PV installations over time.<br>Data last checked against source: 2026-11-10 11:08 UTC. Page built 2026-11-10 11:27 UTC.</p>
+  <p class="subtitle">UK domestic heat pump, battery and solar PV installations over time.<br>Data last checked against source: 2026-11-10 11:27 UTC. Page built 2026-11-10 11:35 UTC.</p>
   <div id="charts"></div>
   <footer>
     Sources: DESNZ heat pump deployment statistics, MCS domestic battery installation statistics, DESNZ Energy Trends 6.3 (solar PV).
@@ -153,7 +153,10 @@ function downloadChartPNG(svg, idBase) {
   // stripped, and would otherwise fall back to SVG's default black fill.
   originals.forEach((origEl, i) => {
     const cloneEl = clones[i];
-    if (!cloneEl || !cloneEl.isConnected) return;
+    // Note: cloneEl.isConnected is always false here - clone is a detached
+    // tree, never inserted into the document - so that can't be used to
+    // detect removed elements. Just skip ones the earlier pass deleted.
+    if (!cloneEl || cloneEl.parentNode === null) return;
     const computed = getComputedStyle(origEl);
     cloneEl.setAttribute('fill', computed.fill);
     cloneEl.setAttribute('stroke', computed.stroke);
