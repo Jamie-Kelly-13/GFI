@@ -65,7 +65,7 @@ def build_solar_series() -> dict:
         for r in rows
     ]
     return {
-        "id": "solar",
+        "id": "solar_cumulative",
         "title": "Solar PV installations (cumulative)",
         "unit": "cumulative installations",
         "cadence": "monthly",
@@ -73,6 +73,27 @@ def build_solar_series() -> dict:
         "year_step": 12,
         "color_light": "#eb6834",
         "color_dark": "#d95926",
+        "points": points,
+    }
+
+
+def build_solar_monthly_series() -> dict:
+    rows = read_csv(DATA_DIR / "solar.csv")
+    rows = [r for r in rows if r["cumulative_installs"]]
+    rows.sort(key=lambda r: r["year_month"])
+    points = []
+    for prev, cur in zip(rows, rows[1:]):
+        added = int(float(cur["cumulative_installs"])) - int(float(prev["cumulative_installs"]))
+        points.append({"period": cur["year_month"], "value": added})
+    return {
+        "id": "solar_monthly",
+        "title": "Solar PV installations added",
+        "unit": "installations / month",
+        "cadence": "monthly",
+        "period_step": 1,
+        "year_step": 12,
+        "color_light": "#eda100",
+        "color_dark": "#c98500",
         "points": points,
     }
 
@@ -337,7 +358,12 @@ SERIES.forEach(buildChart);
 def build() -> None:
     from datetime import datetime, timezone
 
-    series = [build_heat_pump_series(), build_battery_series(), build_solar_series()]
+    series = [
+        build_heat_pump_series(),
+        build_battery_series(),
+        build_solar_monthly_series(),
+        build_solar_series(),
+    ]
     html = TEMPLATE.format(
         series_json=json.dumps(series),
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
