@@ -212,23 +212,31 @@ function periodStepBack(points, idx, step) {{
 function downloadChartPNG(svg, idBase) {{
   const ns = 'http://www.w3.org/2000/svg';
   const clone = svg.cloneNode(true);
-  const originals = svg.querySelectorAll('*');
-  const clones = clone.querySelectorAll('*');
+  const originals = Array.from(svg.querySelectorAll('*'));
+  const clones = Array.from(clone.querySelectorAll('*'));
+
+  // Hover-only elements (crosshair/dot) have no place in a static export -
+  // drop them rather than rely on their hidden opacity carrying over.
+  clones.forEach((cloneEl, i) => {{
+    const origEl = originals[i];
+    if (origEl.classList.contains('crosshair') || origEl.classList.contains('hover-dot')) {{
+      cloneEl.remove();
+    }}
+  }});
 
   // Resolve every CSS custom property (var(--...)) to its actual used
   // color before export, since a standalone exported SVG has no
-  // stylesheet of its own to resolve them against.
+  // stylesheet of its own to resolve them against. Always set both
+  // fill and stroke explicitly - e.g. the line path relies on a
+  // stylesheet rule (fill: none) that disappears once class is
+  // stripped, and would otherwise fall back to SVG's default black fill.
   originals.forEach((origEl, i) => {{
     const cloneEl = clones[i];
+    if (!cloneEl || !cloneEl.isConnected) return;
     const computed = getComputedStyle(origEl);
-    if (origEl.hasAttribute('fill') || cloneEl.tagName === 'text' || cloneEl.tagName === 'circle') {{
-      cloneEl.setAttribute('fill', computed.fill);
-    }}
-    if (origEl.hasAttribute('stroke') || cloneEl.tagName === 'line' || cloneEl.tagName === 'path') {{
-      cloneEl.setAttribute('stroke', computed.stroke);
-    }}
+    cloneEl.setAttribute('fill', computed.fill);
+    cloneEl.setAttribute('stroke', computed.stroke);
     cloneEl.removeAttribute('class');
-    cloneEl.removeAttribute('opacity');
   }});
 
   const vb = svg.viewBox.baseVal;
@@ -343,11 +351,13 @@ function buildChart(series) {{
     svg.appendChild(el('circle', {{ cx: x(i), cy: y(p.value), r: points.length > 60 ? 2 : 3.5, fill: color }}));
   }});
 
-  // x-axis labels (first, last, and a few in between)
+  // x-axis labels (first, last, and a few in between) - anchor the first/
+  // last labels to the inside edge so they don't clip past the viewBox
   const labelCount = Math.min(6, points.length);
   for (let k = 0; k < labelCount; k++) {{
     const i = Math.round(k * (points.length - 1) / Math.max(labelCount - 1, 1));
-    const t = el('text', {{ x: x(i), y: h - 6, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': '10' }});
+    const anchor = k === 0 ? 'start' : (k === labelCount - 1 ? 'end' : 'middle');
+    const t = el('text', {{ x: x(i), y: h - 6, 'text-anchor': anchor, fill: 'var(--muted)', 'font-size': '10' }});
     t.textContent = points[i].period;
     svg.appendChild(t);
   }}
