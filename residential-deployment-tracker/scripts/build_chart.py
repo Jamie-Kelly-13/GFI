@@ -56,27 +56,6 @@ def build_battery_series() -> dict:
     }
 
 
-def build_solar_series() -> dict:
-    rows = read_csv(DATA_DIR / "solar.csv")
-    rows = [r for r in rows if r["cumulative_installs"]]
-    rows.sort(key=lambda r: r["year_month"])
-    points = [
-        {"period": r["year_month"], "value": int(float(r["cumulative_installs"]))}
-        for r in rows
-    ]
-    return {
-        "id": "solar_cumulative",
-        "title": "Solar PV installations (cumulative)",
-        "unit": "cumulative installations",
-        "cadence": "monthly",
-        "period_step": 1,
-        "year_step": 12,
-        "color_light": "#eb6834",
-        "color_dark": "#d95926",
-        "points": points,
-    }
-
-
 def build_solar_monthly_series() -> dict:
     rows = read_csv(DATA_DIR / "solar.csv")
     rows = [r for r in rows if r["cumulative_installs"]]
@@ -164,8 +143,21 @@ TEMPLATE = """<!doctype html>
     padding: 20px 20px 12px;
     margin-bottom: 20px;
   }}
+  .card-head {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }}
   .card h2 {{ font-size: 1.05rem; margin: 0 0 2px; }}
   .card .unit {{ color: var(--muted); font-size: 0.8rem; margin: 0 0 8px; }}
+  .dl-btn {{
+    flex-shrink: 0;
+    font: inherit;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    background: var(--page);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+  }}
+  .dl-btn:hover {{ color: var(--text-primary); border-color: var(--baseline); }}
   svg {{ width: 100%; height: 220px; display: block; overflow: visible; }}
   .line {{ fill: none; stroke-width: 2px; }}
   .grid-line {{ stroke: var(--grid); stroke-width: 1px; }}
@@ -197,7 +189,7 @@ TEMPLATE = """<!doctype html>
 <body>
 <div class="wrap">
   <h1>GFI Residential Deployment Tracker</h1>
-  <p class="subtitle">UK domestic heat pump, battery and solar PV installations over time. Generated {generated_at}.</p>
+  <p class="subtitle">UK domestic heat pump, battery and solar PV installations over time.<br>Data last checked against source: {last_checked}. Page built {generated_at}.</p>
   <div id="charts"></div>
   <footer>
     Sources: DESNZ heat pump deployment statistics, MCS domestic battery installation statistics, DESNZ Energy Trends 6.3 (solar PV).
@@ -217,6 +209,67 @@ function periodStepBack(points, idx, step) {{
   return j >= 0 ? points[j] : null;
 }}
 
+function downloadChartPNG(svg, idBase) {{
+  const ns = 'http://www.w3.org/2000/svg';
+  const clone = svg.cloneNode(true);
+  const originals = svg.querySelectorAll('*');
+  const clones = clone.querySelectorAll('*');
+
+  // Resolve every CSS custom property (var(--...)) to its actual used
+  // color before export, since a standalone exported SVG has no
+  // stylesheet of its own to resolve them against.
+  originals.forEach((origEl, i) => {{
+    const cloneEl = clones[i];
+    const computed = getComputedStyle(origEl);
+    if (origEl.hasAttribute('fill') || cloneEl.tagName === 'text' || cloneEl.tagName === 'circle') {{
+      cloneEl.setAttribute('fill', computed.fill);
+    }}
+    if (origEl.hasAttribute('stroke') || cloneEl.tagName === 'line' || cloneEl.tagName === 'path') {{
+      cloneEl.setAttribute('stroke', computed.stroke);
+    }}
+    cloneEl.removeAttribute('class');
+    cloneEl.removeAttribute('opacity');
+  }});
+
+  const vb = svg.viewBox.baseVal;
+  clone.setAttribute('xmlns', ns);
+  clone.setAttribute('width', vb.width);
+  clone.setAttribute('height', vb.height);
+
+  const bg = getComputedStyle(document.querySelector('.card')).backgroundColor;
+  const bgRect = document.createElementNS(ns, 'rect');
+  bgRect.setAttribute('x', vb.x);
+  bgRect.setAttribute('y', vb.y);
+  bgRect.setAttribute('width', vb.width);
+  bgRect.setAttribute('height', vb.height);
+  bgRect.setAttribute('fill', bg);
+  clone.insertBefore(bgRect, clone.firstChild);
+
+  const svgText = new XMLSerializer().serializeToString(clone);
+  const svgBlob = new Blob([svgText], {{ type: 'image/svg+xml;charset=utf-8' }});
+  const url = URL.createObjectURL(svgBlob);
+
+  const img = new Image();
+  img.onload = () => {{
+    const scale = 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = vb.width * scale;
+    canvas.height = vb.height * scale;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+
+    canvas.toBlob((blob) => {{
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `gfi-${{idBase}}-chart.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }}, 'image/png');
+  }};
+  img.src = url;
+}}
+
 function buildChart(series) {{
   const card = document.createElement('div');
   card.className = 'card';
@@ -226,13 +279,19 @@ function buildChart(series) {{
   const color = isDark ? series.color_dark : series.color_light;
 
   card.innerHTML = `
-    <h2>${{series.title}}</h2>
-    <p class="unit">${{series.unit}}</p>
+    <div class="card-head">
+      <div>
+        <h2>${{series.title}}</h2>
+        <p class="unit">${{series.unit}}</p>
+      </div>
+      <button class="dl-btn" type="button">Download PNG</button>
+    </div>
     <div class="chart-pos"><svg viewBox="0 0 860 220" preserveAspectRatio="none"></svg></div>
   `;
   document.getElementById('charts').appendChild(card);
 
   const svg = card.querySelector('svg');
+  card.querySelector('.dl-btn').addEventListener('click', () => downloadChartPNG(svg, series.id));
   const points = series.points;
   if (points.length === 0) {{
     card.querySelector('.chart-pos').innerHTML = '<p style="color:var(--muted)">No data yet.</p>';
@@ -362,11 +421,19 @@ def build() -> None:
         build_heat_pump_series(),
         build_battery_series(),
         build_solar_monthly_series(),
-        build_solar_series(),
     ]
+    status_file = DATA_DIR / "last_checked.json"
+    last_checked = "never"
+    if status_file.exists():
+        status = json.loads(status_file.read_text())
+        checked_ats = [v["checked_at"] for v in status.values() if v.get("checked_at")]
+        if checked_ats:
+            last_checked = datetime.fromisoformat(min(checked_ats)).strftime("%Y-%m-%d %H:%M UTC")
+
     html = TEMPLATE.format(
         series_json=json.dumps(series),
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        last_checked=last_checked,
     )
     OUTPUT_HTML.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_HTML.write_text(html)

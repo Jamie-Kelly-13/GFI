@@ -2,9 +2,9 @@ name: Residential deployment tracker
 
 on:
   schedule:
-    # Daily at 06:00 UTC. Sources update monthly/quarterly, so this just
-    # needs to be frequent enough to catch a new release promptly.
-    - cron: "0 6 * * *"
+    # Weekly, Monday 06:00 UTC. Sources update monthly/quarterly, so this
+    # just needs to be frequent enough to catch a new release promptly.
+    - cron: "0 6 * * 1"
   workflow_dispatch: {}
   push:
     branches: [main]
