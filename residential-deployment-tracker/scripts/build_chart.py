@@ -28,8 +28,9 @@ def build_heat_pump_series() -> dict:
     points = [{"period": r["quarter"], "value": int(r["total_installs"])} for r in rows]
     return {
         "id": "heat_pump",
-        "title": "Heat pump installations",
+        "title": "Heat pump installations per quarter",
         "unit": "installations / quarter",
+        "source": "DESNZ heat pump deployment statistics",
         "cadence": "quarterly",
         "period_step": 1,
         "year_step": 4,
@@ -45,8 +46,9 @@ def build_battery_series() -> dict:
     points = [{"period": r["year_month"], "value": int(r["installs"])} for r in rows]
     return {
         "id": "battery",
-        "title": "Battery installations",
+        "title": "Battery installations per month",
         "unit": "installations / month",
+        "source": "MCS domestic battery installation statistics",
         "cadence": "monthly",
         "period_step": 1,
         "year_step": 12,
@@ -66,8 +68,9 @@ def build_solar_monthly_series() -> dict:
         points.append({"period": cur["year_month"], "value": added})
     return {
         "id": "solar_monthly",
-        "title": "Solar PV installations added",
+        "title": "Solar PV installations added per month",
         "unit": "installations / month",
+        "source": "DESNZ Energy Trends 6.3 (solar PV)",
         "cadence": "monthly",
         "period_step": 1,
         "year_step": 12,
@@ -83,6 +86,7 @@ TEMPLATE = """<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>GFI Residential Deployment Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {{
     color-scheme: light;
@@ -158,6 +162,19 @@ TEMPLATE = """<!doctype html>
     cursor: pointer;
   }}
   .dl-btn:hover {{ color: var(--text-primary); border-color: var(--baseline); }}
+  .xl-btn {{
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 14px;
+    margin-bottom: 20px;
+    cursor: pointer;
+  }}
+  .xl-btn:hover {{ border-color: var(--baseline); }}
   svg {{ width: 100%; height: 220px; display: block; overflow: visible; }}
   .line {{ fill: none; stroke-width: 2px; }}
   .grid-line {{ stroke: var(--grid); stroke-width: 1px; }}
@@ -191,6 +208,7 @@ TEMPLATE = """<!doctype html>
 <div class="wrap">
   <h1>GFI Residential Deployment Tracker</h1>
   <p class="subtitle">UK domestic heat pump, battery and solar PV installations over time.<br>Data last checked against source: {last_checked}. Page built {generated_at}.</p>
+  <button class="xl-btn" id="download-xlsx" type="button">Download underlying data (Excel)</button>
   <div id="charts"></div>
   <footer>
     Sources: DESNZ heat pump deployment statistics, MCS domestic battery installation statistics, DESNZ Energy Trends 6.3 (solar PV).
@@ -200,6 +218,16 @@ TEMPLATE = """<!doctype html>
 <div class="tooltip" id="tooltip"></div>
 <script>
 const SERIES = {series_json};
+const RAW_DATA = {raw_data_json};
+
+document.getElementById('download-xlsx').addEventListener('click', () => {{
+  const wb = XLSX.utils.book_new();
+  for (const [sheetName, rows] of Object.entries(RAW_DATA)) {{
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+  }}
+  XLSX.writeFile(wb, 'gfi-residential-deployment-data.xlsx');
+}});
 
 function fmt(n) {{
   return n.toLocaleString();
@@ -250,7 +278,7 @@ function yearBoundaries(points) {{
   return marks.map((m, k) => ({{ ...m, showLabel: k % labelStride === 0 }}));
 }}
 
-function downloadChartPNG(svg, idBase) {{
+function downloadChartPNG(svg, idBase, title, sourceLine) {{
   const ns = 'http://www.w3.org/2000/svg';
   const clone = svg.cloneNode(true);
   const originals = Array.from(svg.querySelectorAll('*'));
@@ -305,11 +333,26 @@ function downloadChartPNG(svg, idBase) {{
   const img = new Image();
   img.onload = () => {{
     const scale = 2;
+    const headerH = 56;
     const canvas = document.createElement('canvas');
     canvas.width = vb.width * scale;
-    canvas.height = vb.height * scale;
+    canvas.height = (vb.height + headerH) * scale;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    // Bake the title/source into the image itself, since a downloaded
+    // PNG loses the surrounding page once shared on its own.
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const inkColor = getComputedStyle(document.body).getPropertyValue('--text-primary').trim();
+    const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+    ctx.fillStyle = inkColor;
+    ctx.font = `bold ${{15 * scale}}px system-ui, -apple-system, sans-serif`;
+    ctx.fillText(title, 14 * scale, 24 * scale);
+    ctx.fillStyle = mutedColor;
+    ctx.font = `${{11 * scale}}px system-ui, -apple-system, sans-serif`;
+    ctx.fillText(sourceLine, 14 * scale, 42 * scale);
+
+    ctx.drawImage(img, 0, headerH * scale, vb.width * scale, vb.height * scale);
     URL.revokeObjectURL(url);
 
     canvas.toBlob((blob) => {{
@@ -335,7 +378,7 @@ function buildChart(series) {{
     <div class="card-head">
       <div>
         <h2>${{series.title}}</h2>
-        <p class="unit">${{series.unit}}</p>
+        <p class="unit">${{series.unit}} &middot; Source: ${{series.source}}</p>
       </div>
       <button class="dl-btn" type="button">Download PNG</button>
     </div>
@@ -344,7 +387,9 @@ function buildChart(series) {{
   document.getElementById('charts').appendChild(card);
 
   const svg = card.querySelector('svg');
-  card.querySelector('.dl-btn').addEventListener('click', () => downloadChartPNG(svg, series.id));
+  card.querySelector('.dl-btn').addEventListener('click', () => downloadChartPNG(
+    svg, series.id, series.title, `${{series.unit}} · Source: ${{series.source}}`
+  ));
   const points = series.points;
   if (points.length === 0) {{
     card.querySelector('.chart-pos').innerHTML = '<p style="color:var(--muted)">No data yet.</p>';
@@ -496,8 +541,15 @@ def build() -> None:
         if checked_ats:
             last_checked = datetime.fromisoformat(min(checked_ats)).strftime("%Y-%m-%d %H:%M UTC")
 
+    raw_data = {
+        "Heat pump (quarterly)": read_csv(DATA_DIR / "heat_pump.csv"),
+        "Battery (monthly)": read_csv(DATA_DIR / "battery.csv"),
+        "Solar PV (monthly)": read_csv(DATA_DIR / "solar.csv"),
+    }
+
     html = TEMPLATE.format(
         series_json=json.dumps(series),
+        raw_data_json=json.dumps(raw_data),
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         last_checked=last_checked,
     )
