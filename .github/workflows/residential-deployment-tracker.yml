@@ -52,6 +52,8 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "Update residential deployment tracker data [automated]"
+            git fetch origin main
+            git rebase origin/main
             git push
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
