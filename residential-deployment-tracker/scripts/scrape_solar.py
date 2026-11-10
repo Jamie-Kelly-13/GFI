@@ -9,7 +9,7 @@ from scrape_common import NoCandidateFound, download, fetch_html, find_file_link
 PAGE_URL = "https://www.gov.uk/government/statistics/energy-trends-section-6-renewables"
 
 
-def find_and_parse() -> tuple[dict, str]:
+def find_and_parse() -> tuple[list[dict], str]:
     soup = fetch_html(PAGE_URL)
 
     # ET 6.3 is one of several tables on this page (6.1, 6.2, 6.3, ...) -
@@ -36,19 +36,20 @@ def find_and_parse() -> tuple[dict, str]:
     for file_url in file_urls:
         try:
             path = download(file_url)
-            row = parse_solar.parse(path)
-            return row, file_url
+            rows = parse_solar.parse(path)
+            if rows:
+                return rows, file_url
         except Exception:
             continue
 
     raise NoCandidateFound(
-        f"Found {len(file_urls)} candidate file(s) but none had a 'Table_3_dom_by_PC' sheet "
-        f"with the expected total row (source page: {PAGE_URL})"
+        f"Found {len(file_urls)} candidate file(s) but none had a '{parse_solar.SHEET_NAME}' sheet "
+        f"with the expected 'of which: domestic' rows (source page: {PAGE_URL})"
     )
 
 
 if __name__ == "__main__":
-    row, file_url = find_and_parse()
-    parse_solar.append_csv(row)
+    rows, file_url = find_and_parse()
+    parse_solar.write_csv(rows)
     print(f"Updated from {file_url}")
-    print(f"Wrote/updated {row['release_month']} in {parse_solar.OUTPUT_CSV}")
+    print(f"Wrote {len(rows)} rows to {parse_solar.OUTPUT_CSV}")

@@ -98,7 +98,7 @@ def check_battery(status: dict) -> bool:
 
 def check_solar(status: dict) -> bool:
     try:
-        row, file_url = scrape_solar.find_and_parse()
+        rows, file_url = scrape_solar.find_and_parse()
     except Exception as exc:
         status["solar"] = {
             "ok": False,
@@ -111,10 +111,10 @@ def check_solar(status: dict) -> bool:
 
     import parse_solar
 
-    latest = row["release_month"]
+    latest = rows[-1]["year_month"] if rows else None
     changed = latest != status.get("solar", {}).get("latest_period")
     if changed:
-        parse_solar.append_csv(row)
+        parse_solar.write_csv(rows)
         print(f"[solar] updated, latest period: {latest}")
     else:
         print(f"[solar] no change (latest period still {latest})")

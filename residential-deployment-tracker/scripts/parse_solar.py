@@ -1,7 +1,10 @@
-"""Parse DESNZ Energy Trends 6.3 solar PV domestic-by-constituency sheet into data/solar.csv.
+"""Parse DESNZ Energy Trends 6.3 solar PV workbook into data/solar.csv.
 
-Uses the "All constituencies" / "All countries" row, which is the true
-domestic-only UK total (not the 0-4kW capacity-band proxy).
+Uses the UK "of which: domestic" rows in Table_1_by_Capacity - one under
+the CUMULATIVE CAPACITY (MW) table, one under the CUMULATIVE COUNT table.
+Both carry the full monthly history since Jan 2010, not just the current
+release's snapshot, so (like heat pump/battery) this file is rewritten in
+full on every parse rather than appended to.
 """
 import csv
 import re
@@ -13,59 +16,88 @@ import openpyxl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_CSV = REPO_ROOT / "data" / "solar.csv"
+SHEET_NAME = "Table_1_by_Capacity"
 
-COLUMNS = ["release_month", "cumulative_capacity_mw", "cumulative_installs"]
+COLUMNS = ["year_month", "cumulative_capacity_mw", "cumulative_installs"]
 
-MONTH_RE = re.compile(
-    r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})"
-)
+MONTH_HEADER_RE = re.compile(r"([A-Za-z]{3})\s*\n?\s*(\d{4})")
+MONTH_ABBR = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}
 
 
-def parse(xlsx_path: Path) -> dict:
+def _parse_month_headers(header_row: tuple) -> list[str]:
+    year_months = []
+    for cell in header_row[1:]:
+        if cell is None:
+            break
+        match = MONTH_HEADER_RE.search(str(cell))
+        if not match:
+            break
+        month = MONTH_ABBR[match.group(1)]
+        year = int(match.group(2))
+        year_months.append(f"{year}-{month:02d}")
+    return year_months
+
+
+def parse(xlsx_path: Path) -> list[dict]:
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
-    ws = wb["Table_3_dom_by_PC"]
+    ws = wb[SHEET_NAME]
 
-    rows = list(ws.iter_rows(min_row=1, max_col=5, values_only=True))
+    rows = list(ws.iter_rows(values_only=True))
 
-    title = rows[0][0]
-    match = MONTH_RE.search(str(title))
-    if not match:
-        raise ValueError(f"Could not find release month in title: {title!r}")
-    release_month = datetime.strptime(f"{match.group(1)} {match.group(2)}", "%B %Y").strftime("%Y-%m")
+    capacity_header_idx = next(
+        i for i, r in enumerate(rows) if r and r[0] == "CUMULATIVE CAPACITY (MW) [note 1]"
+    )
+    count_header_idx = next(i for i, r in enumerate(rows) if r and r[0] == "CUMULATIVE COUNT")
 
-    for row in rows:
-        constituency_code, country_region = row[0], row[1]
-        if constituency_code == "All constituencies" and country_region == "All countries":
-            return {
-                "release_month": release_month,
-                "cumulative_capacity_mw": round(row[3], 2),
-                "cumulative_installs": row[4],
+    capacity_months = _parse_month_headers(rows[capacity_header_idx])
+    count_months = _parse_month_headers(rows[count_header_idx])
+
+    def find_uk_domestic_row(start_idx: int) -> tuple:
+        # "of which: domestic" appears once, in the UK block, after the
+        # GB and NI blocks within this table.
+        for r in rows[start_idx:]:
+            if r and r[0] is None:
+                break
+            if r and str(r[0]).startswith("of which: domestic"):
+                return r
+        raise ValueError(f"Could not find 'of which: domestic' row after row {start_idx}")
+
+    capacity_row = find_uk_domestic_row(capacity_header_idx)
+    count_row = find_uk_domestic_row(count_header_idx)
+
+    capacity_by_month = dict(zip(capacity_months, capacity_row[1:]))
+    count_by_month = dict(zip(count_months, count_row[1:]))
+
+    all_months = sorted(set(capacity_by_month) | set(count_by_month))
+    out_rows = []
+    for ym in all_months:
+        cap = capacity_by_month.get(ym)
+        cnt = count_by_month.get(ym)
+        out_rows.append(
+            {
+                "year_month": ym,
+                "cumulative_capacity_mw": round(cap, 2) if cap is not None else "",
+                "cumulative_installs": cnt if cnt is not None else "",
             }
+        )
+    return out_rows
 
-    raise ValueError("Could not find 'All constituencies' / 'All countries' total row")
 
-
-def append_csv(row: dict) -> None:
+def write_csv(rows: list[dict]) -> None:
     OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    existing_rows = []
-    if OUTPUT_CSV.exists():
-        with OUTPUT_CSV.open(newline="") as f:
-            existing_rows = list(csv.DictReader(f))
-
-    existing_rows = [r for r in existing_rows if r["release_month"] != row["release_month"]]
-    existing_rows.append(row)
-    existing_rows.sort(key=lambda r: r["release_month"])
-
     with OUTPUT_CSV.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=COLUMNS)
         writer.writeheader()
-        writer.writerows(existing_rows)
+        writer.writerows(rows)
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: parse_solar.py <path-to-xlsx>")
         sys.exit(1)
-    row = parse(Path(sys.argv[1]))
-    append_csv(row)
-    print(f"Wrote/updated {row['release_month']} in {OUTPUT_CSV}")
+    rows = parse(Path(sys.argv[1]))
+    write_csv(rows)
+    print(f"Wrote {len(rows)} rows to {OUTPUT_CSV}")

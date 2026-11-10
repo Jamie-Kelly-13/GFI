@@ -58,9 +58,10 @@ def build_battery_series() -> dict:
 
 def build_solar_series() -> dict:
     rows = read_csv(DATA_DIR / "solar.csv")
-    rows.sort(key=lambda r: r["release_month"])
+    rows = [r for r in rows if r["cumulative_installs"]]
+    rows.sort(key=lambda r: r["year_month"])
     points = [
-        {"period": r["release_month"], "value": int(float(r["cumulative_installs"]))}
+        {"period": r["year_month"], "value": int(float(r["cumulative_installs"]))}
         for r in rows
     ]
     return {
